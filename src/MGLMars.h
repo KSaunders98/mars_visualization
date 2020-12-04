@@ -14,7 +14,7 @@
 namespace Aftr {
     constexpr GLuint NUM_PATCHES_PER_BUFFER = 10;
 
-    // derived values
+    // derived constants
     constexpr GLuint NUM_VERTS_PER_PATCH = PATCH_RESOLUTION * PATCH_RESOLUTION;
     constexpr GLuint NUM_TRIS_PER_PATCH = (PATCH_RESOLUTION - 1) * (PATCH_RESOLUTION - 1) * 2;
 
@@ -180,6 +180,5 @@ namespace Aftr {
         std::shared_ptr<Patch> getPatch(uint32_t index);
         std::shared_ptr<Patch> createUpdateGetPatch(uint32_t index);
         std::shared_ptr<Patch> generatePatch(uint32_t index);
-        void fixGaps();
     };
 }
