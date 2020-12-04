@@ -8,7 +8,8 @@ namespace Aftr {
     class WOMars : public WO {
     public:
         static WOMars* New();
-        static WOMars* New(const Camera** cam, double scale = 1.0, const Mat4D& reference = Mat4D());
+        static WOMars* New(const Camera** cam, double scale = 1.0);
+        static WOMars* New(const Camera** cam, const VectorD& reference, double scale = 1.0);
 
         void onUpdateWO() override;
 
@@ -16,7 +17,6 @@ namespace Aftr {
         const Camera** camPtrPtr;
 
         WOMars();
-        void onCreate() override;
         void onCreate(const Camera** cam, double scale, const Mat4D& reference);
     };
 }

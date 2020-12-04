@@ -1,26 +1,15 @@
 #include "MGLMars.h"
 
+#include <random>
 #include <string>
 
 #include "Camera.h"
 #include "GLSLShaderDefaultGL32.h"
 #include "Utils.h"
 
-#include "cpprest/filestream.h"
-#include "cpprest/http_client.h"
-
 using namespace Aftr;
 
-using namespace web;
-using namespace web::http;
-using namespace web::http::client;
-using namespace concurrency;
-
 constexpr double MARS_RADIUS = 3.3895e6; // mean radius of Mars in meters
-
-static const std::string API_URL = "http://192.168.1.110:3000/";
-static const std::string API_ELEV_URL = API_URL + "elevation";
-static const std::string API_IMG_URL = API_URL + "imagery";
 
 MGLMars::MGLMars(WO* parentWO, double scale, const Mat4D& refMat)
     : MGL(parentWO)
@@ -41,93 +30,6 @@ MGLMars::~MGLMars()
     for (size_t i = 0; i < asyncThreads.size(); i++) {
         asyncThreads[i].join();
     }
-}
-
-bool makeGetRequest(const std::string base_uri, uri_builder& uri, std::vector<unsigned char>& result)
-{
-    http_client client(utility::conversions::utf8_to_utf16(base_uri));
-    http_response response;
-    try {
-        response = client.request(methods::GET, uri.to_string()).get();
-    } catch (...) {
-        std::cerr << "Unable to make get request: " << uri.to_string().c_str() << std::endl;
-        return false;
-    }
-
-    if (response.status_code() != status_codes::OK) {
-        std::cerr << "Get request failed: " << uri.to_string().c_str()
-            << "\n\tStatus Code: " << response.status_code() << std::endl;
-        return false;
-    }
-
-    std::vector<unsigned char> data;
-    try {
-        data = response.extract_vector().get();
-    } catch (...) {
-        std::cerr << "Get request failed: " << uri.to_string().c_str()
-            << "\n\tUnable to get data from response" << std::endl;
-        return false;
-    }
-
-    // copy data into result
-    result.resize(data.size());
-    std::copy(data.begin(), data.end(), result.begin());
-
-    return true;
-}
-
-bool MGLMars::loadElevation(uint32_t id, std::vector<int16_t>& data)
-{
-    uri_builder builder{};
-    builder.append_query(L"id", id);
-
-    std::vector<unsigned char> result;
-    bool success = makeGetRequest(API_ELEV_URL, builder, result);
-    if (!success) {
-        std::cerr << "Failed to load elevation data for tile id: " << id << std::endl;
-        return false;
-    }
-
-    size_t expected_size = PATCH_RESOLUTION * PATCH_RESOLUTION * sizeof(int16_t);
-    if (result.size() != expected_size) {
-        std::cerr << "Unable to fetch elevation data for tile id: " << id
-                  << "\n\tIncorrect response size: " << result.size() << " bytes (expected " << expected_size << " bytes)" << std::endl;
-        return false;
-    }
-
-    data.resize(PATCH_RESOLUTION * PATCH_RESOLUTION);
-    for (size_t i = 0; i < result.size(); i += 2) {
-        // bytes are in big-endian int16 format
-        int16_t e = static_cast<int16_t>(result[i]) << 8 | static_cast<int16_t>(result[i + 1]);
-        data[i / 2] = e;
-    }
-
-    return true;
-}
-
-bool MGLMars::loadImagery(uint32_t id, std::vector<GLubyte>& data)
-{
-    uri_builder builder{};
-    builder.append_query(L"id", id);
-
-    std::vector<unsigned char> result;
-    bool success = makeGetRequest(API_IMG_URL, builder, result);
-    if (!success) {
-        std::cerr << "Failed to load imagery data for tile id: " << id << std::endl;
-        return false;
-    }
-
-    size_t expected_size = PATCH_RESOLUTION * PATCH_RESOLUTION * 3 * sizeof(GLubyte);
-    if (result.size() != expected_size) {
-        std::cerr << "Unable to fetch imagery data for tile id: " << id
-                  << "\n\tIncorrect response size: " << result.size() << " bytes (expected " << expected_size << " bytes)" << std::endl;
-        return false;
-    }
-
-    data.resize(PATCH_RESOLUTION * PATCH_RESOLUTION * 3);
-    std::copy(result.begin(), result.end(), data.begin());
-
-    return true;
 }
 
 void MGLMars::init()
@@ -240,109 +142,55 @@ void MGLMars::update(const Camera& cam)
 {
     // calculate current tile from camera position
     VectorD v = getRelativeToCenter(cam.getPosition());
-    VectorD camSpherical = toSpherical(v);
-    uint32_t patchIndex = getPatchIndexFromSpherical(camSpherical);
+    VectorD camMars2000 = toMars2000FromCartesian(v, marsScale);
+    uint32_t patchIndex = getPatchIndexFromMars2000(camMars2000);
     uint32_t patchX = patchIndex % 360;
     uint32_t patchY = patchIndex / 360;
 
     visiblePatches.clear(); // clear visible patches, we must recalculate them
 
-    int64_t rad = 2;
-
-    /*for (int64_t y = -rad; y <= rad; ++y) {
-        for (int64_t x = -rad; x <= rad; ++x) {
-            // get patch index
-            uint64_t index = getNeighborPatchIndex(tileX, tileY, x, y, dim);
-            std::shared_ptr<Patch> patch = getPatch(zoomLevel, index);
-            visiblePatches.insert(patch);
-        }
-    }*/
+    int32_t rad = 1;
 
     // add patches going outward from the center patch
-    /*for (int64_t r = 0; r <= rad; ++r) {
-        for (int64_t y = -r; y <= r; ++y) {
-            for (int64_t x = -r; x <= r; ++x) {
+    for (int32_t r = 0; r <= rad; ++r) {
+        for (int32_t y = -r; y <= r; ++y) {
+            for (int32_t x = -r; x <= r; ++x) {
                 if ((y == -r || y == r) || (x == -r || x == r)) {
                     // get patch index
-                    uint64_t index = getNeighborPatchIndex(patchX, patchY, x, y, dim);
-                    std::shared_ptr<Patch> patch = createUpdateGetPatch(zoomLevel, index);
+                    uint32_t index = getNeighborPatchIndex(patchX, patchY, x, y);
+                    std::shared_ptr<Patch> patch = createUpdateGetPatch(index);
                     visiblePatches.insert(patch);
                 }
             }
         }
     }
 
-    fixGaps();*/
-
-    visiblePatches.insert(createUpdateGetPatch(patchIndex));
+    //fixGaps();
 }
 
-/*uint64_t MGLMars::getNeighborPatchIndex(uint64_t x, uint64_t y, int64_t dx, int64_t dy, uint64_t dim)
+uint32_t MGLMars::getNeighborPatchIndex(uint32_t x, uint32_t y, int32_t dx, int32_t dy)
 {
-    uint64_t tileX;
-    if (dx < 0 && static_cast<uint64_t>(-dx) > x) { // underflow
-        uint64_t wrap = static_cast<uint64_t>(-dx) - x;
-        tileX = dim - wrap;
-    }
-    else if (dx > 0 && static_cast<uint64_t>(dx) > (dim - x - 1)) { // overflow
-        uint64_t wrap = static_cast<uint64_t>(dx) - (dim - x);
-        tileX = wrap;
-    }
-    else {
-        tileX = x + dx;
+    uint32_t patchX;
+    if (dx < 0 && static_cast<uint32_t>(-dx) > x) { // underflow
+        uint32_t wrap = static_cast<uint32_t>(-dx) - x;
+        patchX = 360 - wrap;
+    } else if (dx > 0 && static_cast<uint32_t>(dx) > (360 - x - 1)) { // overflow
+        uint32_t wrap = static_cast<uint32_t>(dx) - (360 - x);
+        patchX = wrap;
+    } else {
+        patchX = x + dx;
     }
 
-    uint64_t tileY;
-    if (dy < 0 && static_cast<uint64_t>(-dy) > y) { // underflow
-        // rotate X by 180 degrees
-        /*if (tileX >= dim / 2) {
-            tileX = tileX - dim / 2;
-        } else {
-            tileX = tileX + dim / 2;
-        }
-
-        uint64_t wrap = static_cast<uint64_t>(-dy) - y - 1;
-        tileY = wrap;* /
-        tileY = 0;
-    }
-    else if (dy > 0 && static_cast<uint64_t>(dy) > (dim - y - 1)) { // overflow
-     /* //uint64_t wrap = static_cast<uint64_t>(dy) - (dim - y - 1);
-     //tileY = wrap;
-
-     // rotate X by 180 degrees
-     if (tileX >= dim / 2) {
-         tileX = tileX - dim / 2;
-     } else {
-         tileX = tileX + dim / 2;
-     }
-
-     uint64_t wrap = static_cast<uint64_t>(dy) - (dim - y - 1);
-     tileY = dim - wrap;* /
-        tileY = dim - 1;
-    }
-    else {
-        tileY = y + dy;
+    uint32_t patchY;
+    if (dy < 0 && static_cast<uint32_t>(-dy) > y) { // underflow
+        patchY = 0;
+    } else if (dy > 0 && static_cast<uint32_t>(dy) > (360 - y - 1)) { // overflow
+        patchY = 360 - 1;
+    } else {
+        patchY = y + dy;
     }
 
-    return tileY * dim + tileX;
-} */
-
-uint32_t MGLMars::getPatchIndexFromSpherical(const VectorD& p)
-{
-    uint32_t x = static_cast<uint32_t>(p.x + 180.0);
-    uint32_t y = static_cast<uint32_t>(90.0 - p.y);
-
-    return x + y * 360;
-}
-
-VectorD MGLMars::getSphericalFromPatchIndex(uint32_t index)
-{
-    uint32_t x = index % 360;
-    uint32_t y = index / 360;
-    double theta = static_cast<double>(x) - 180.0;
-    double phi = 90.0 - static_cast<double>(y);
-
-    return VectorD(theta, phi, 0.0);
+    return patchX + patchY * 360;
 }
 
 VectorD MGLMars::getRelativeToCenter(const VectorD& p) const
@@ -383,103 +231,85 @@ std::shared_ptr<Patch> MGLMars::createUpdateGetPatch(uint32_t index)
         patch = i.first->second;
     }
 
-    /*if (patch->tex != nullptr && patch->tex->isTexFullyInitialized() && patch->parentTex != nullptr) {
-        // texture loaded, need to update UVs accordingly and make parentTex null
-        patch->parentTex = nullptr;
-        patch->useParentTex = false;
+    if (patch->texture == nullptr && patch->imgReady.load()) {
+        GLuint texID;
+        glGenTextures(1, &texID);
+        glBindTexture(GL_TEXTURE_2D, texID);
 
-        // calculate ul and lr of patch from tile index
-        uint64_t dim = 1ull << (static_cast<uint64_t>(level) + 1);
-        uint64_t tileX = tile % dim;
-        uint64_t tileY = tile / dim;
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
 
-        VectorD ul = getWGS84FromPatchIndex(tileX, tileY, dim);
-        VectorD lr = getWGS84FromPatchIndex(tileX + 1, tileY + 1, dim);
+        // use tightly packed data
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
 
-        auto& buffer = buffers.at(patch->bufferGroup);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, PATCH_RESOLUTION, PATCH_RESOLUTION,
+            0, GL_RGB, GL_UNSIGNED_BYTE, &patch->imgData[0]);
+        glGenerateMipmap(GL_TEXTURE_2D);
 
-        GLuint baseVertIndex = patch->bufferIndex * NUM_VERTS_PER_PATCH;
-        GLVertex* vert = &buffer->vertexData[baseVertIndex];
-        for (GLuint x = 0; x <= NUM_SUBDIVISIONS_PER_PATCH; ++x) {
-            // calculate the lattitude at this subdivison level
-            double v = static_cast<double>(x) / NUM_SUBDIVISIONS_PER_PATCH;
-            //double lat = ul.x + (lr.x - ul.x) * v;
+        // reset to default
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
 
-            for (GLuint y = 0; y <= NUM_SUBDIVISIONS_PER_PATCH; ++y) {
-                // calculate the longitude at this subdivision level
-                double u = static_cast<double>(y) / NUM_SUBDIVISIONS_PER_PATCH;
-                //double lon = ul.y + (lr.y - ul.y) * u;
+        // generate CPU side texture data
+        TextureDataOwnsGLHandle* tex = new TextureDataOwnsGLHandle("DynamicTexture");
+        tex->isMipmapped(true);
+        tex->setTextureDimensionality(GL_TEXTURE_2D);
+        tex->setGLInternalFormat(GL_RGB);
+        tex->setGLRawTexelFormat(GL_RGB);
+        tex->setGLRawTexelType(GL_UNSIGNED_BYTE);
+        tex->setTextureDimensions(PATCH_RESOLUTION, PATCH_RESOLUTION);
+        tex->setGLTex(texID);
 
-                // combine lat and lon into WGS84 coordinate
-                //VectorD wgs = VectorD(lat, lon, 0);
-                /*VectorD wgs = getWGS84FromPatchIndexD(static_cast<double>(tileX) + u, static_cast<double>(tileY) + v, dim);
-
-                vert->texCoord = getUVFromWGS84(wgs, tileX, tileY, dim);* /
-
-                vert->texCoord = aftrTexture4f(static_cast<float>(u), static_cast<float>(1.0 - v));
-
-                vert++; // advance pointer
-            }
-        }
-
-        // post data to OpenGL
-        glBindBuffer(GL_ARRAY_BUFFER, buffer->vertexBuffer);
-        glBufferSubData(GL_ARRAY_BUFFER, baseVertIndex * sizeof(GLVertex), NUM_VERTS_PER_PATCH * sizeof(GLVertex), &buffer->vertexData[baseVertIndex]);
-        glBindBuffer(GL_ARRAY_BUFFER, 0);
+        patch->texture = new TextureOwnsTexDataOwnsGLHandle(tex);
+        patch->texture->setWrapS(GL_CLAMP_TO_EDGE);
+        patch->texture->setWrapT(GL_CLAMP_TO_EDGE);
     }
 
     if (!patch->elevLoaded && patch->elevReady.load()) {
-        // elevation data loaded, need to apply it
-        patch->elevLoaded = true;
+        uint32_t patchX = index % 360;
+        uint32_t patchY = index / 360;
 
-        // calculate ul and lr of patch from tile index
-        uint64_t dim = 1ull << (static_cast<uint64_t>(level) + 1);
-        uint64_t tileX = tile % dim;
-        uint64_t tileY = tile / dim;
+        uint32_t nextIndex = (patchX + 1) + (patchY + 1) * 360;
 
-        VectorD ul = getWGS84FromPatchIndex(tileX, tileY, dim);
-        VectorD lr = getWGS84FromPatchIndex(tileX + 1, tileY + 1, dim);
+        VectorD ul = getMars2000FromPatchIndex(index);
+        VectorD lr = getMars2000FromPatchIndex(nextIndex);
 
-        auto& buffer = buffers.at(patch->bufferGroup);
-
-        GLuint baseVertIndex = patch->bufferIndex * NUM_VERTS_PER_PATCH;
-        GLVertex* vert = &buffer->vertexData[baseVertIndex];
-        for (GLuint x = 0; x <= NUM_SUBDIVISIONS_PER_PATCH; ++x) {
+        std::shared_ptr<PatchArray> array = patchArrays.at(patch->arrayGroup);
+        GLVertex* vertPtr = array->getPatchVertexStart(patch->arrayIndex);
+        for (GLuint y = 0; y < PATCH_RESOLUTION; ++y) {
             // calculate the lattitude at this subdivison level
-            double v = static_cast<double>(x) / NUM_SUBDIVISIONS_PER_PATCH;
-            //double lat = ul.x + (lr.x - ul.x) * v;
+            double v = static_cast<double>(y) / (PATCH_RESOLUTION - 1);
+            double lat = ul.x + (lr.x - ul.x) * v;
 
-            for (GLuint y = 0; y <= NUM_SUBDIVISIONS_PER_PATCH; ++y) {
+            for (GLuint x = 0; x < PATCH_RESOLUTION; ++x) {
                 // calculate the longitude at this subdivision level
-                double u = static_cast<double>(y) / NUM_SUBDIVISIONS_PER_PATCH;
-                //double lon = ul.y + (lr.y - ul.y) * u;
+                double u = static_cast<double>(x) / (PATCH_RESOLUTION - 1);
+                double lon = ul.y + (lr.y - ul.y) * u;
 
-                // combine lat and lon into WGS84 coordinate
-                //VectorD wgs = VectorD(lat, lon, 0);
-                VectorD wgs = getWGS84FromPatchIndexD(static_cast<double>(tileX) + u, static_cast<double>(tileY) + v, dim);
-                wgs.z = static_cast<double>(patch->elevData[x * (NUM_SUBDIVISIONS_PER_PATCH + 1) + y]) * 1;
-
-                VectorD ecef = wgs.toECEFfromWGS84() * MarsScale;
+                // combine lat and lon into spherical coordinate
+                VectorD mars2000 = VectorD(lat, lon, 0);
+                mars2000.z = static_cast<double>(patch->elevData[x + y * PATCH_RESOLUTION]);
+                VectorD cart = toCartesianFromMars2000(mars2000, marsScale);
 
                 // transform based on reference
-                double in[4] = { ecef.x, ecef.y, ecef.z, 1.0 };
+                double in[4] = { cart.x, cart.y, cart.z, 1.0 };
                 double out[4];
                 transformVector4DThrough4x4Matrix(in, out, referenceInv.getPtr());
 
                 // write back into a VectorD
                 VectorD pos(out[0], out[1], out[2]);
 
-                vert->pos = pos.toVecS();
+                vertPtr->pos = pos.toVecS();
 
-                vert++; // advance pointer
+                vertPtr++; // advance pointer
             }
         }
 
         // post data to OpenGL
-        glBindBuffer(GL_ARRAY_BUFFER, buffer->vertexBuffer);
-        glBufferSubData(GL_ARRAY_BUFFER, baseVertIndex * sizeof(GLVertex), NUM_VERTS_PER_PATCH * sizeof(GLVertex), &buffer->vertexData[baseVertIndex]);
-        glBindBuffer(GL_ARRAY_BUFFER, 0);
-    }*/
+        array->uploadVertexSegment(patch->arrayIndex, 1);
+        patch->elevLoaded = true;
+    }
 
     return patch;
 }
@@ -491,9 +321,8 @@ std::shared_ptr<Patch> MGLMars::generatePatch(uint32_t index)
 
     uint32_t nextIndex = (patchX + 1) + (patchY + 1) * 360;
 
-    VectorD ul = getSphericalFromPatchIndex(index);
-    VectorD lr = getSphericalFromPatchIndex(nextIndex);
-    VectorD center = (ul + lr) / 2;
+    VectorD ul = getMars2000FromPatchIndex(index);
+    VectorD lr = getMars2000FromPatchIndex(nextIndex);
 
     // create new patch
     std::shared_ptr<Patch> patch = std::make_shared<Patch>();
@@ -509,27 +338,21 @@ std::shared_ptr<Patch> MGLMars::generatePatch(uint32_t index)
     patch->arrayGroup = patchArrays.size() - 1;
     patch->arrayIndex = array->size++;
 
-    std::vector<int16_t> elev;
-    bool success = loadElevation(index, elev);
-
     // generate patch vertices and tex coords
     GLVertex* vertPtr = array->getPatchVertexStart(patch->arrayIndex);
     for (GLuint y = 0; y < PATCH_RESOLUTION; ++y) {
         // calculate the lattitude at this subdivison level
         double v = static_cast<double>(y) / (PATCH_RESOLUTION - 1);
-        double lat = ul.y + (lr.y - ul.y) * v;
+        double lat = ul.x + (lr.x - ul.x) * v;
 
         for (GLuint x = 0; x < PATCH_RESOLUTION; ++x) {
             // calculate the longitude at this subdivision level
             double u = static_cast<double>(x) / (PATCH_RESOLUTION - 1);
-            double lon = ul.x + (lr.x - ul.x) * u;
+            double lon = ul.y + (lr.y - ul.y) * u;
 
             // combine lat and lon into spherical coordinate
-            VectorD sph = VectorD(lon, lat, 0.0);
-            if (success) {
-                sph.z = static_cast<double>(elev[x + y * PATCH_RESOLUTION]) * 10.0;
-            }
-            VectorD cart = toCartesian(sph, marsScale);
+            VectorD mars2000 = VectorD(lat, lon, 0.0);
+            VectorD cart = toCartesianFromMars2000(mars2000, marsScale);
 
             // transform based on reference
             double in[4] = { cart.x, cart.y, cart.z, 1.0 };
@@ -578,7 +401,7 @@ std::shared_ptr<Patch> MGLMars::generatePatch(uint32_t index)
     array->uploadVertexSegment(patch->arrayIndex, 1);
     array->uploadIndexSegment(patch->arrayIndex, 1);
 
-    //asyncPatchesToLoad.push(patch.get());
+    asyncPatchesToLoad.push(patch.get());
 
     return patch;
 }

@@ -7,15 +7,16 @@
 
 #include "boost/lockfree/queue.hpp"
 
+#include "AftrOpenGLIncludes.h"
 #include "MGL.h"
+#include "Utils.h"
 
 namespace Aftr {
-    static const GLuint NUM_PATCHES_PER_BUFFER = 10;
-    static const GLuint PATCH_RESOLUTION = 256;
+    constexpr GLuint NUM_PATCHES_PER_BUFFER = 10;
 
     // derived values
-    static const GLuint NUM_VERTS_PER_PATCH = PATCH_RESOLUTION * PATCH_RESOLUTION;
-    static const GLuint NUM_TRIS_PER_PATCH = (PATCH_RESOLUTION - 1) * (PATCH_RESOLUTION - 1) * 2;
+    constexpr GLuint NUM_VERTS_PER_PATCH = PATCH_RESOLUTION * PATCH_RESOLUTION;
+    constexpr GLuint NUM_TRIS_PER_PATCH = (PATCH_RESOLUTION - 1) * (PATCH_RESOLUTION - 1) * 2;
 
     struct GLVertex {
         Vector pos;
@@ -132,10 +133,9 @@ namespace Aftr {
         Texture* texture = nullptr;
 
         bool elevLoaded = false;
-        bool imgLoaded = false;
         std::vector<int16_t> elevData;
-        std::vector<GLubyte> imgData;
         std::atomic<bool> elevReady = false;
+        std::vector<GLubyte> imgData;
         std::atomic<bool> imgReady = false;
         std::array<bool, 8> fixedGaps;
     };
@@ -174,11 +174,7 @@ namespace Aftr {
 
         GLuint vao;
 
-        //static uint64_t getNeighborPatchIndex(uint64_t x, uint64_t y, int64_t dx, int64_t dy, uint64_t dim);
-        static uint32_t getPatchIndexFromSpherical(const VectorD& p);
-        static VectorD getSphericalFromPatchIndex(uint32_t index);
-        static bool loadElevation(uint32_t index, std::vector<int16_t>& data);
-        static bool loadImagery(uint32_t index, std::vector<GLubyte>& data);
+        static uint32_t getNeighborPatchIndex(uint32_t x, uint32_t y, int32_t dx, int32_t dy);
 
         VectorD getRelativeToCenter(const VectorD& p) const;
         std::shared_ptr<Patch> getPatch(uint32_t index);

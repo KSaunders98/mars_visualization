@@ -21,7 +21,7 @@ using namespace Aftr;
 using namespace web::http;
 using namespace web::http::client;
 
-constexpr double SCALE = 1e-3;
+constexpr double SCALE = 1;
 
 GLViewMarsVisualization* GLViewMarsVisualization::New( const std::vector< std::string >& args )
 {
@@ -172,8 +172,8 @@ void Aftr::GLViewMarsVisualization::loadMap()
     this->actorLst = new WorldList();
     this->netLst = new WorldList();
 
-    ManagerOpenGLState::GL_CLIPPING_PLANE = 1000.0;
-    ManagerOpenGLState::GL_NEAR_PLANE = 0.1f;
+    ManagerOpenGLState::GL_CLIPPING_PLANE = 100000.0;
+    ManagerOpenGLState::GL_NEAR_PLANE = 1.0f;
     ManagerOpenGLState::enableFrustumCulling = false;
     Axes::isVisible = true;
     this->glRenderer->isUsingShadowMapping( false ); //set to TRUE to enable shadow mapping, must be using GL 3.2+
@@ -226,39 +226,10 @@ void Aftr::GLViewMarsVisualization::loadMap()
     wo->renderOrderType = RENDER_ORDER_TYPE::roOPAQUE;
     worldLst->push_back( wo );
 
-    //VectorD loc(-133.8, 18.65, 0.0);
-    VectorD loc(-82.096111, 39.329167, 0.0);
+    VectorD loc(18.65, -133.8, 2);
+    //VectorD loc(-8.88, -92.27, 2);
 
-    // calculate reference matrix
-    VectorD pos = toCartesian(loc, SCALE);
-    std::cout << pos << " | " << pos.magnitude() << std::endl;
-    VectorD z = pos.normalizeMe();
-    VectorD np = toCartesian(VectorD(0, 90, 0), SCALE);
-    VectorD x = np - pos;
-    x = x.vectorProjectOnToPlane(z);
-    x.normalize();
-    VectorD y = z.crossProduct(x);
-    y.normalize();
-
-    Mat4D ref;
-    ref[0] = x.x;
-    ref[1] = x.y;
-    ref[2] = x.z;
-    ref[3] = 0;
-
-    ref[4] = y.x;
-    ref[5] = y.y;
-    ref[6] = y.z;
-    ref[7] = 0;
-
-    ref[8] = z.x;
-    ref[9] = z.y;
-    ref[10] = z.z;
-    ref[11] = 0;
-
-    ref = ref.translate(VectorD(0, 0, pos.magnitude()));
-
-    WOMars* mars = WOMars::New(const_cast<const Camera**>(getCameraPtrPtr()), SCALE, ref);
+    WOMars* mars = WOMars::New(const_cast<const Camera**>(getCameraPtrPtr()), loc, SCALE);
     mars->setPosition(0, 0, 0);
     worldLst->push_back(mars);
 }
