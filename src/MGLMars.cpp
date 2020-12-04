@@ -41,6 +41,10 @@ void MGLMars::init()
     skin.setShader(static_cast<GLSLShader*>(ManagerShader::getDefaultShaderCopy()));
     MGL::addSkin(std::move(skin));
 
+    // set default texture that is generally the color of Mars's surface
+    GLubyte color[4] = {0x90, 0x69, 0x61, 0x00};
+    getSkin().getMultiTextureSet().at(0) = ManagerTexture::loadDynamicTexture(GL_TEXTURE_2D, 0, 1, 1, GL_RGB, 0, GL_RGB, GL_UNSIGNED_BYTE, color);
+
     // create and setup VAO
     glGenVertexArrays(1, &vao);
     glBindVertexArray(vao);
