@@ -9,8 +9,6 @@
 
 using namespace Aftr;
 
-constexpr double MARS_RADIUS = 3.3895e6; // mean radius of Mars in meters
-
 MGLMars::MGLMars(WO* parentWO, double scale, const Mat4D& refMat)
     : MGL(parentWO)
     , asyncPatchesToLoad(std::thread::hardware_concurrency())
@@ -68,7 +66,7 @@ void MGLMars::init()
 
     shutdownMsg.store(false); // ensure shutdown message is not true
 
-    // spawn background threads that handle async texture loading
+    // spawn background threads that handle async elevation + imagery fetching
     for (size_t i = 0; i < std::max(std::thread::hardware_concurrency(), 1u); ++i) {
         asyncThreads.emplace_back([this, i]() {
             std::default_random_engine gen;
@@ -153,10 +151,8 @@ void MGLMars::update(const Camera& cam)
 
     visiblePatches.clear(); // clear visible patches, we must recalculate them
 
-    int32_t rad = 1;
-
     // add patches going outward from the center patch
-    for (int32_t r = 0; r <= rad; ++r) {
+    for (int32_t r = 0; r <= PATCH_RENDER_RADIUS; ++r) {
         for (int32_t y = -r; y <= r; ++y) {
             for (int32_t x = -r; x <= r; ++x) {
                 if ((y == -r || y == r) || (x == -r || x == r)) {
@@ -168,8 +164,6 @@ void MGLMars::update(const Camera& cam)
             }
         }
     }
-
-    //fixGaps();
 }
 
 uint32_t MGLMars::getNeighborPatchIndex(uint32_t x, uint32_t y, int32_t dx, int32_t dy)
@@ -235,6 +229,7 @@ std::shared_ptr<Patch> MGLMars::createUpdateGetPatch(uint32_t index)
         patch = i.first->second;
     }
 
+    // create OpenGL texture if the data has been loaded
     if (patch->texture == nullptr && patch->imgReady.load()) {
         GLuint texID;
         glGenTextures(1, &texID);
@@ -270,6 +265,7 @@ std::shared_ptr<Patch> MGLMars::createUpdateGetPatch(uint32_t index)
         patch->texture->setWrapT(GL_CLAMP_TO_EDGE);
     }
 
+    // apply elevation offsets if the data has been loaded
     if (!patch->elevLoaded && patch->elevReady.load()) {
         uint32_t patchX = index % 360;
         uint32_t patchY = index / 360;
@@ -354,7 +350,7 @@ std::shared_ptr<Patch> MGLMars::generatePatch(uint32_t index)
             double u = static_cast<double>(x) / (PATCH_RESOLUTION - 1);
             double lon = ul.y + (lr.y - ul.y) * u;
 
-            // combine lat and lon into spherical coordinate
+            // combine lat and lon into mars2000 coordinate
             VectorD mars2000 = VectorD(lat, lon, 0.0);
             VectorD cart = toCartesianFromMars2000(mars2000, marsScale);
 

@@ -1,8 +1,7 @@
 #pragma once
 
-#include "WO.h"
-
 #include "Mat4.h"
+#include "WO.h"
 
 namespace Aftr {
     class WOMars : public WO {

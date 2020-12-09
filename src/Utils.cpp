@@ -103,8 +103,7 @@ bool Aftr::makeGetRequest(const std::string base_uri, uri_builder& uri, std::vec
     http_response response;
     try {
         response = client.request(methods::GET, uri.to_string()).get();
-    }
-    catch (...) {
+    } catch (...) {
         std::cerr << "Unable to make get request: " << uri.to_string().c_str() << std::endl;
         return false;
     }
@@ -118,8 +117,7 @@ bool Aftr::makeGetRequest(const std::string base_uri, uri_builder& uri, std::vec
     std::vector<unsigned char> data;
     try {
         data = response.extract_vector().get();
-    }
-    catch (...) {
+    } catch (...) {
         std::cerr << "Get request failed: " << uri.to_string().c_str()
             << "\n\tUnable to get data from response" << std::endl;
         return false;

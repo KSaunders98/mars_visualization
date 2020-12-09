@@ -3,11 +3,10 @@
 #include "cpprest/http_client.h"
 
 #include "AftrOpenGLIncludes.h"
+#include "Constants.h"
 #include "Vector.h"
 
 namespace Aftr {
-    constexpr GLuint PATCH_RESOLUTION = 256;
-
     VectorD toMars2000FromCartesian(const VectorD& p, double scale);
     VectorD toCartesianFromMars2000(const VectorD& p, double scale);
     uint32_t getPatchIndexFromMars2000(const VectorD& p);
